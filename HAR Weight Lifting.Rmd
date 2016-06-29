@@ -1,0 +1,641 @@
+---
+title: HAR Weight Lifting 
+author: "Frederic Bevia"
+date: "28 juin 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE)
+
+library(pander)
+```
+
+ 
+### Executive Summary
+
+In this project of prÃ©dictive machine learning, using R, we have tried to build a classifier for qualitative activity recognition of weight lifting exercises, based on the "Weight Lifting Exercises Dataset" from the Human Activity Recognition site <link>. To do so, we have evaluated six classifications algorithms including Random Forest and Support Vector Machine, using K-fold crossvalidation and features selection. After having choose the model presenting the best accuracy, we have predicted with that model the outcome of the twenty tests cases in the test dataset, as required.
+
+
+
+## The Problem
+    
+Today, using such new devices like smartphone and fitness bands, one thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do.
+On an expériment, described in the paper <ref  http://groupware.les.inf.puc-rio.br/har#ixzz4CrzTgWBK>, six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+- Class A: exactly according to the specification  
+- Class B: throwing the elbows to the front 
+- Class C: lifting the dumbbell only halfway  
+- Class D: lowering the dumbbell only halfway 
+- Class E: throwing the hips to the front  
+
+(This is the "classe" variable in the training set).  
+
+Various data were collected from accelerometers on the belt, forearm, arm, and dumbell of the 6 participants.
+
+The goal here, is to predict the manner in which they did the exercise, using the classe variable as outcome in the training dataset.
+
+
+
+
+
+Note: All the code is in the annex of these document   
+
+
+## Load and Prepare Data
+
+Since the datasets are in the csv format, first of all, we open then in a spreadsheet (Excel or Calc) to have a peek on the datas. So we can note that there is a lot of missing datas, NA strings and even "#DIV/0!" strings. To correct that we will substitute all these strings by "NA" at the loading.
+
+
+
+ So after having loaded all the libraries required ..   
+
+```{r loadlibraries, echo=FALSE, message=FALSE}
+
+# load the libraries
+library(mlbench)
+library(caret)
+library(corrplot)
+library(rpart)
+library(class)
+library(randomForest)
+library(MASS)
+library(gbm)
+library(survival)
+library(splines)
+library(parallel)
+library(plyr)
+library(doParallel)
+library(kernlab)
+```
+we load the datasets:
+
+```{r loaddatas}
+# Load and prep the datas
+# change for the working directory
+# setwd("/media/fred/Donnees/Donnees/Coursera/Machine Learning/devoir")
+
+# load the dataset
+
+PmlTrain <- read.csv("pml-training.csv", stringsAsFactors=FALSE, na.strings=c("NA","#DIV/0!",""))
+PmlTest <- read.csv("pml-testing.csv", stringsAsFactors=FALSE,na.strings=c("NA","#DIV/0!",""))
+
+# View(PmlTrain)
+# summary(PmlTrain)
+# head(PmlTrain)
+
+#View(PmlTest )
+#summary(PmlTest)
+#head(PmlTest)
+```
+
+
+
+
+
+Dimensions of the training dataset: 
+```{r dim_training, echo=FALSE}
+print(dim(PmlTrain))
+
+
+```
+Quite Big nNumber of samples : 19622 !
+
+Dimensions of the testing dataset: 
+  
+  
+```{rdim_testing, echo=FALSE}
+print(dim(PmlTest))
+
+
+```
+
+```{r outcome_as_factor, echo=FALSE}
+# The outcome as factor
+PmlTrain$classe <-as.factor(PmlTrain$classe) 
+
+```
+## Basic Exploratory Data Analysis
+
+
+### Tidying Data
+
+Before everything else, we have to to treat the NA case, because there is lot of columns full of NA.
+
+*Frequency tables of the NAs :*
+```{r Frequency_tables ,echo=FALSE }
+
+nbnatraining <-sum(is.na(PmlTrain)) #very important Na
+nbnatesting <- sum(is.na(PmlTest))
+
+
+tna.testing<-table(colSums(is.na(PmlTest)))
+tna.training<-table(colSums(is.na(PmlTrain)))
+
+pander(tna.training)
+
+natrainmin<-as.numeric(min(names(tna.training)[-1]))
+natestmin<-as.numeric(min(names(tna.testing)[-1]))
+```
+
+Number of NA in the training dataset: 
+
+```{r Number_of_NA_training , echo=FALSE}
+print(nbnatraining)
+pander(tna.training)
+```
+
+
+Number of NA in the testing dataset: 
+
+```{r Number_of_NA_testing, echo=FALSE}
+print(nbnatesting)
+pander(tna.testing)
+
+```
+
+So we get rid of the attributes whose columns are full of NA
+```{r rid_of_NA}
+
+PmlTrain<-PmlTrain[,colSums(is.na(PmlTrain)) < natrainmin]
+PmlTest<-PmlTest[,colSums(is.na(PmlTest)) < natestmin]
+```
+
+We have now `r length(names(PmlTrain))` variables for the training dataset,
+and `r length(names(PmlTest))` variables for the training dataset,
+But if we compare the attributes of the two sets, by intersecting and diff them, we can see that there is two differents
+attributes:
+```{r compare_sets, echo=FALSE}
+
+
+print(setdiff(names(PmlTrain),names(PmlTest)))
+print(setdiff(names(PmlTest),names(PmlTrain)))
+```
+The two are in the last column.
+By the way , we can also see that the seven first attribute are unnecessary.
+so again, we get rid of them, and of course the last attribute of the testing set.
+
+```{r get_rid_first_columns}
+PmlTrain<-PmlTrain[,8:60]
+
+
+PmlTest<-PmlTest[,8:59]
+
+```
+
+Now the dimensions of the training set are: `r dim(PmlTrain)`
+
+
+### summary : 
+```{r summary_1, echo=FALSE}
+print(summary(PmlTrain))
+
+```
+
+
+#### Frequencies of the classes
+
+```{r class_frequecies, echo=FALSE}
+
+freqclasse<-table(PmlTrain$classe)
+
+pander(freqclasse)
+
+barplot(freqclasse, main="Biceps Curl Correctness Classes", ylab= "Total Executions",beside=TRUE, col=heat.colors(5))
+
+```
+
+we can see that there is a relatively consistant distribution among the classes, except for the classe A whith a higher value, which mean that the partcipant did this move,the correct biceps curl, more than the others bad moves.
+
+
+### features selection
+
+In order to see if we can still lessen the number of sinificant variables lets do some feature selection, with the correlation matrix:
+
+
+```{r, echo=FALSE}
+
+
+set.seed(1960)
+# calculate correlation matrix
+corMx<- cor(PmlTrain[,-53])
+# summarize the correlation matrix
+#print(corMx)
+corrplot(corMx, method = "circle", type="lower", order="hclust", tl.cex = 0.75, tl.col="blue", tl.srt = 45, addrect = 3)
+
+
+```
+
+We can see that there is somes attributes wich are correlated.
+Let's compute which of them are highly correlated (ideally >0.75):
+
+
+```{r}
+hCor <- findCorrelation(corMx, cutoff=0.75)
+
+
+
+# print indexes of highly correlated attributes
+print(hCor)
+
+
+```
+There is `r length(hCor)' attributes that are highly corelated and which can be taken out:
+
+
+```{r}
+
+
+PmlTrain<-PmlTrain[,-hCor]
+PmlTest <-PmlTest[,-hCor]
+```
+
+Computing again the correlation  matrix,
+
+```{r, echo=FALSE}
+
+dim(PmlTrain)
+corMx2<- cor(PmlTrain[,-32])
+corrplot(corMx2, method = "circle", type="lower", order="hclust", tl.cex = 0.75, tl.col="blue", tl.srt = 45, addrect = 3)
+```
+
+we can see now that there is less correlation among the `r dim(PmlTrain)[2]-1` attributes remaning.
+
+
+
+Now, we can evaluate somes algorithms and build models
+
+## Building Models
+
+Were going to create some models of the data and estimate their accuracy on unseen data.
+
+To do so we're going to
+
+- Set-up the test to use 5-fold cross validation.
+- Build 6 different models to predict Classes of Biceps movement
+- Select the best model, upon is accuracy.
+
+In order to test different type of algorithms, i choose six well know classifiers which are representatives of differents methods:
+
+- CART: classification and regression tree
+- LVQ: Learning Vector Quantization (a special case of neural network)
+- LDA: Linear discriminant analysis
+- GBM: Gradient Boosted Machine 
+- RF:  Random Forest
+- SVM: Support Vector Machine
+
+
+For the cross-validation, each model is tuned and  evaluated using 3 repeats of 5-fold, thanks to the caret package.
+
+Note: Initialy, i would use 5 repeat and 10-fold, but on my laptop, for somes of the algorithms, it was not possible (infinite time or Rstudio out), even with the doParallel package which permit to use the for(4) cores of my PC.
+
+```{r}
+#  Use the cores Luke !!
+
+registerDoParallel(cores=4)
+
+```
+To insure the accuracy the model which we will select, we are partionning the training test, and putting aside a part of the training dataset. We will use these test set to cross-validate the selected model before using it to predict the classes for the initial testing set.
+
+
+```{r}
+#set.seed(1960)
+inTrain <- createDataPartition(PmlTrain$classe, p = 0.75,list=FALSE)
+training <- PmlTrain[ inTrain,]
+testing <- PmlTrain[-inTrain,]
+
+```
+
+## Predictives Algorithms Evalution 
+```{r, message= FALSE}
+# prepare training scheme
+control <- trainControl(method="repeatedcv", number=5, repeats=3)
+
+
+
+# train the CART model
+set.seed(1960)
+modelCart <- train(classe~., data=training , method="rpart", metric="Accuracy", trControl=control)
+
+# train the LVQ model <- very long to execute on my PC
+set.seed(1960)
+modelLvq <- train(classe~., data=training , method="lvq",metric="Accuracy", trControl=control)
+
+# train the LDA model
+set.seed(1960)
+modelLda <- train(classe~., data=training , method="lda",metric="Accuracy",trControl=control)
+
+# train the GBM model
+set.seed(1960)
+modelGbm <- train(classe~., data=training , method="gbm",metric="Accuracy", trControl=control, verbose=FALSE)
+
+# train the RF model
+set.seed(1960)
+modelRF<- train(classe~., data=training , method="rf",metric="Accuracy",trControl=control)
+
+# train the SVM model
+set.seed(1960)
+modelSvm <- train(classe~., data=training , method="svmRadial",metric="Accuracy", trControl=control)
+```
+### Results
+
+```{r, echo=FALSE,warning=FALSE, message= FALSE}
+# collect resamples
+results <- resamples(list( CART=modelCart,LVQ=modelLvq, LDA=modelLda, GBM=modelGbm, RF=modelRF, SVM=modelSvm))
+
+# summarize the distributions
+pander(summary(results))
+# boxplots of results
+bwplot(results)
+# dot plots of results
+dotplot(results)
+```
+
+Both for the accuracy (o.99) and the Kappa (near 1), the model which is the best is the one produced by the **Random Forrest** Algorithm. As we can see all the more on the boxplot and the dotplot.
+We can also see that the tree first algorithms, cART, LVQ and LDA are not performing very well, while GBM and SVM are near the performances of the RF.
+
+So we select these model to do the predictions .
+
+#### Importance
+Before doing so, we can look at the importance of the variables:
+
+```{r, echo=FALSE, message=FALSE}
+
+# estimate variable importance
+importance <- varImp(modelRF, scale=FALSE)
+```
+
+
+```{r, warning=FALSE,echo=FALSE}
+# summarize importance
+pander(importance)
+```
+
+```{r, echo=FALSE}
+# plot importance
+
+plot(importance)
+```
+
+
+
+We can see here that we could have eliminated again some variables, the 3 or 4 last one.
+
+## Cross Validation againts the  validation set
+
+Now, before applying the model to the real test set, we are testing it again the part of the training set that we have pu apart for that:
+
+```{r}
+
+
+prediction <- predict(modelRF, testing)
+confMX<-confusionMatrix(testing$classe, prediction)
+
+print(confMX)
+
+pander(postResample(prediction, testing$classe))
+
+```
+
+We can see that the accuracy and the kappa are verigood and on the confusion matrix 
+there is not much misclassification, curiuouly  just on the second diagonal, under the first diagonal. 
+
+## Testing the Model
+
+ We're applying the model to the initial test Dataset, to predict the classes of the 20 samples
+
+
+```{r}
+#
+predictedClasses <- predict(modelRF, PmlTest)
+
+print(predictedClasses)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+## Conclusions
+
+In these project we have evaluated several algorith to produce a model with good accuracy, and even if it's the Random Forest which is the better, two others algorithms are very near in term of accuracy, the GBM and a SVM. But to be complete, we should take into account the fact that the most perfoming algorithms are very greedy in cpu and RAM, and most consuming in time, and because of that I couldn't do more than 3 repeats on 5 fold in the repeated cross-validation K-fold method.Also, we might improve the features selection.
+
+
+
+
+
+
+## Annex
+
+### References
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+http://www.academia.edu/7619059/Human_Activity_Recognition_using_machine_learning
+http://link.springer.com/article/10.1007%2Fs12652-011-0068-9#page-1
+
+http://michaelryoo.com/cvpr2011tutorial/
+
+http://blog.aicry.com/r-parallel-computing-in-5-minutes/
+
+https://en.wikipedia.org/wiki/Decision_tree_learning
+https://en.wikipedia.org/wiki/Learning_vector_quantization
+https://en.wikipedia.org/wiki/Gradient_boosting
+https://en.wikipedia.org/wiki/Support_vector_machine
+https://en.wikipedia.org/wiki/Linear_discriminant_analysis
+
+#### Code
+
+```{r, eval=FALSE}
+# load the libraries
+library(mlbench)
+library(caret)
+library(corrplot)
+library(rpart)
+library(class)
+library(randomForest)
+library(MASS)
+library(gbm)
+library(survival)
+library(splines)
+library(parallel)
+library(plyr)
+library(doParallel)
+library(kernlab)
+
+# Load and prep the datas
+# change for the working directory
+# setwd("/media/fred/Donnees/Donnees/Coursera/Machine Learning/devoir")
+
+# load the dataset
+
+PmlTrain <- read.csv("pml-training.csv", stringsAsFactors=FALSE, na.strings=c("NA","#DIV/0!",""))
+PmlTest <- read.csv("pml-testing.csv", stringsAsFactors=FALSE,na.strings=c("NA","#DIV/0!",""))
+
+# View(PmlTrain)
+# summary(PmlTrain)
+# head(PmlTrain)
+
+#View(PmlTest )
+#summary(PmlTest)
+#head(PmlTest)
+
+dim(PmlTrain)
+dim(PmlTest)
+
+# The outcome as factor
+PmlTrain$classe <-as.factor(PmlTrain$classe) 
+
+
+# Tidying Data
+# The Na case
+
+nbnatraining <-sum(is.na(PmlTrain)) #very important Na
+nbnatesting <- sum(is.na(PmlTest))
+
+tna.testing<-table(colSums(is.na(PmlTest)))
+tna.training<-table(colSums(is.na(PmlTrain)))
+
+natrainmin<-as.numeric(min(names(tna.training)[-1]))
+natestmin<-as.numeric(min(names(tna.testing)[-1]))
+
+
+PmlTrain<-PmlTrain[,colSums(is.na(PmlTrain)) < natrainmin]
+PmlTest<-PmlTest[,colSums(is.na(PmlTest)) < natestmin]
+
+length(names(PmlTrain))
+length(names(PmlTest))
+length(intersect(names(PmlTrain),names(PmlTest)))
+setdiff(names(PmlTrain),names(PmlTest))
+setdiff(names(PmlTest),names(PmlTrain))
+
+PmlTrain<-PmlTrain[,8:60]
+dim(PmlTrain)
+
+PmlTest<-PmlTest[,8:59]
+
+print(dim(PmlTrain))
+
+print(summary(PmlTrain))
+
+
+freqclasse<-table(PmlTrain$classe)
+barplot(freqclasse, main="Biceps Curl Correctness Classes", ylab= "Total Executions",beside=TRUE, col=heat.colors(5))
+
+
+#features selection
+
+set.seed(1960)
+# calculate correlation matrix
+corMx<- cor(PmlTrain[,-53])
+# summarize the correlation matrix
+#print(corMx)
+corrplot(corMx, method = "circle", type="lower", order="hclust", tl.cex = 0.75, tl.col="blue", tl.srt = 45, addrect = 3)
+# find attributes that are highly corrected (ideally >0.75)
+hCor <- findCorrelation(corMx, cutoff=0.75)
+# print indexes of highly correlated attributes
+print(hCor)
+
+PmlTrain<-PmlTrain[,-hCor]
+PmlTest <-PmlTest[,-hCor]
+
+print(dim(PmlTrain))
+
+corMx2<- cor(PmlTrain[,-32])
+corrplot(corMx2, method = "circle", type="lower", order="hclust", tl.cex = 0.75, tl.col="blue", tl.srt = 45, addrect = 3)
+
+#  Use the cores Luke !!
+
+registerDoParallel(cores=4)
+
+
+set.seed(1960)
+
+# Partition in a training and an intermediary test set, the latter will serve to cross-validate the selected model
+# before applying it to the test dataset
+
+inTrain <- createDataPartition(PmlTrain$classe, p = 0.75,list=FALSE)
+training <- PmlTrain[ inTrain,]
+testing <- PmlTrain[-inTrain,]
+
+
+# prepare training scheme
+control <- trainControl(method="repeatedcv", number=5, repeats=3)
+
+
+
+# train the CART model
+set.seed(1960)
+modelCart <- train(classe~., data=training , method="rpart", metric="Accuracy", trControl=control)
+
+# train the LVQ model <- very long to execute on my PC
+set.seed(1960)
+modelLvq <- train(classe~., data=training , method="lvq",metric="Accuracy", trControl=control)
+
+# train the LDA model
+set.seed(1960)
+modelLda <- train(classe~., data=training , method="lda",metric="Accuracy",trControl=control)
+
+# train the GBM model
+set.seed(1960)
+modelGbm <- train(classe~., data=training , method="gbm",metric="Accuracy", trControl=control, verbose=FALSE)
+
+# train the RF model
+set.seed(1960)
+modelRF<- train(classe~., data=training , method="rf",metric="Accuracy",trControl=control)
+
+# train the SVM model
+set.seed(1960)
+modelSvm <- train(classe~., data=training , method="svmRadial",metric="Accuracy", trControl=control)
+
+# collect resamples
+results <- resamples(list( CART=modelCart,LVQ=modelLvq, LDA=modelLda, GBM=modelGbm, RF=modelRF, SVM=modelSvm))
+# summarize the distributions
+
+print(summary(results))
+
+# boxplots of results
+bwplot(results)
+# dot plots of results
+dotplot(results)
+
+
+# estimate variable importance
+importance <- varImp(modelRF, scale=FALSE)
+
+# summarize importance
+print(importance)
+
+# plot importance
+
+plot(importance)
+
+#Cross Validation againts the  validation set
+
+prediction <- predict(modelRF, testing)
+confMX<-confusionMatrix(testing$classe, prediction)
+
+accuracy<-postResample(prediction, testing$classe)
+
+print(accuracy)
+
+# Applying the model to the initial test Dataset
+# to predict the classes of the 20 samples
+
+predictedClasses <- predict(modelRF, PmlTest)
+print(predictedClasses)
+
+
+
+
+```
+
+
